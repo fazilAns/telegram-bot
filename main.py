@@ -1,72 +1,71 @@
-import asyncio
-from telethon import TelegramClient, events
-from telethon.tl.types import ChannelParticipantsAdmins
+import os
 from datetime import datetime, timedelta
-import pytz
+from telethon import TelegramClient, events
 
-api_id = 23778342
-api_hash = "9525e6f6e968605d773e16a33a4fcf62"
+# Railway Variables
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = int(os.getenv("CHAT_ID"))
 
-group_link = "https://t.me/+26cY61ypdHYwMDc1"
-BOT_TOKEN = "8582125531:AAGrECSl468yNqeGvfnPA1c4RVkgv5BypjQ"
-CHAT_ID = 811294158
+# 👇 നിങ്ങളുടെ ADMIN Telegram USER IDs മാത്രം ഇവിടെ add ചെയ്യുക
+ADMIN_IDS = [
+    123456789,
+    987654321,
+    1122334455,
+]
+# example -> നിങ്ങളുടെ admin user id
 
-IST = pytz.timezone("Asia/Kolkata")
 
-client = TelegramClient("admin_alert", api_id, api_hash).start(bot_token=BOT_TOKEN)
+client = TelegramClient("railway_bot", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-admin_stats = {}
-join_cache = set()
+admin_online = {}
 
-async def get_admins():
-    group = await client.get_entity(group_link)
-    admins = await client.get_participants(group, filter=ChannelParticipantsAdmins)
-    return {a.id: (a.first_name or "Unknown") for a in admins}
-
-async def send(msg):
-    await client.send_message(CHAT_ID, msg)
-
-@client.on(events.NewMessage(pattern='/status'))
-async def status(event):
-    await event.reply("✅ Bot Running\n⚡ PRO Admin Tracker Active")
-
-@client.on(events.NewMessage(pattern='/today'))
-async def today(event):
-    txt = "📊 Today's Admin Activity:\n\n"
-    for k,v in admin_stats.items():
-        txt += f"{v['name']} : {v['count']} msgs\n"
-    await event.reply(txt or "No data")
-
-@client.on(events.NewMessage(pattern='/topadmins'))
-async def topadmins(event):
-    ranking = sorted(admin_stats.values(), key=lambda x: x['count'], reverse=True)
-    txt = "🏆 Top Active Admins:\n\n"
-    for i,a in enumerate(ranking[:10],1):
-        txt += f"{i}. {a['name']} - {a['count']}\n"
-    await event.reply(txt or "No data")
+def format_time(seconds):
+    return str(timedelta(seconds=int(seconds)))
 
 @client.on(events.ChatAction)
-async def join_leave(event):
-    if event.user_joined or event.user_added:
-        await send(f"👤 Admin Joined: {event.user.first_name}")
-    if event.user_left or event.user_kicked:
-        await send(f"👋 Admin Left: {event.user.first_name}")
+async def admin_join_leave(event):
+    if not event.user_joined and not event.user_left:
+        return
 
-async def monitor():
-    admins = await get_admins()
-    await send("🤖 PRO ADMIN TRACKER STARTED\nMonitoring active...")
+    try:
+        user = await event.get_user()
+        if not user:
+            return
 
-    while True:
-        async for msg in client.iter_messages(group_link, limit=30):
-            if msg.sender_id in admins:
-                aid = msg.sender_id
-                if aid not in admin_stats:
-                    admin_stats[aid] = {
-                        "name": admins[aid],
-                        "count": 0
-                    }
-                admin_stats[aid]["count"] += 1
-        await asyncio.sleep(300)
+        if user.id not in ADMIN_IDS:
+            return
 
-client.loop.create_task(monitor())
+        name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        now = datetime.now()
+
+        if event.user_joined:
+            admin_online[user.id] = now
+
+            await client.send_message(
+                CHAT_ID,
+                f"🟢 ADMIN ONLINE\n\n"
+                f"👤 {name}\n"
+                f"🕒 {now.strftime('%I:%M %p')}"
+            )
+
+        elif event.user_left:
+            start = admin_online.pop(user.id, None)
+            if start:
+                duration = (now - start).total_seconds()
+
+                await client.send_message(
+                    CHAT_ID,
+                    f"🔴 ADMIN OFFLINE\n\n"
+                    f"👤 {name}\n"
+                    f"🟢 Online : {start.strftime('%I:%M %p')}\n"
+                    f"🔴 Offline : {now.strftime('%I:%M %p')}\n"
+                    f"⏱ Duration : {format_time(duration)}"
+                )
+
+    except Exception as e:
+        print("Tracker Error:", e)
+
+print("🔥 Admin Online / Offline Tracker Started")
 client.run_until_disconnected()
